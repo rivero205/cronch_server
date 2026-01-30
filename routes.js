@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const MAX_LIMIT = 100;
 
 // --- PRODUCTS ---
 router.get('/products', async (req, res) => {
@@ -14,17 +15,63 @@ router.get('/products', async (req, res) => {
 
 // --- EXPENSES (INSUMOS) ---
 router.get('/expenses', async (req, res) => {
-    const { date } = req.query; // Format: YYYY-MM-DD
+    // Query params: date, startDate, endDate, limit, offset, order (date_desc|date_asc|id_desc|id_asc)
+    const { date, startDate, endDate, limit, offset, order } = req.query;
     try {
-        let query = 'SELECT * FROM expenses';
+        console.log('[GET /expenses] req.query =', req.query);
         const params = [];
+        const where = [];
+
         if (date) {
-            query += ' WHERE date = ?';
+            where.push('date = ?');
             params.push(date);
         }
-        query += ' ORDER BY id DESC';
-        const [rows] = await pool.query(query, params);
-        res.json(rows);
+        if (startDate && endDate) {
+            where.push('date BETWEEN ? AND ?');
+            params.push(startDate, endDate);
+        }
+
+        const whereClause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+        console.log('[GET /expenses] whereClause =', whereClause);
+
+        // Determine order
+        let orderBy = ' ORDER BY date DESC, id DESC';
+        if (order === 'date_asc') orderBy = ' ORDER BY date ASC, id ASC';
+        if (order === 'id_desc') orderBy = ' ORDER BY id DESC';
+        if (order === 'id_asc') orderBy = ' ORDER BY id ASC';
+
+        // Pagination
+        const hasPagination = typeof limit !== 'undefined' || typeof offset !== 'undefined';
+        let dataQuery = `SELECT * FROM expenses${whereClause}${orderBy}`;
+
+        // If pagination requested, fetch total count and apply LIMIT/OFFSET
+        let total = null;
+        if (hasPagination) {
+            console.log('[GET /expenses] counting with params =', params);
+            const [countRows] = await pool.query(`SELECT COUNT(*) as cnt FROM expenses${whereClause}`, params);
+            total = Number(countRows[0].cnt || 0);
+            const defaultLimit = 20;
+            const l0 = parseInt(limit, 10);
+            const l = Number.isNaN(l0) ? defaultLimit : Math.min(MAX_LIMIT, Math.max(1, l0));
+            const o0 = parseInt(offset, 10);
+            const o = Number.isNaN(o0) ? 0 : Math.max(0, o0);
+            dataQuery += ' LIMIT ? OFFSET ?';
+            params.push(l, o);
+            console.log('[GET /expenses] pagination l,o =', l, o);
+        }
+
+        console.log('[GET /expenses] final dataQuery =', dataQuery);
+        console.log('[GET /expenses] final params =', params);
+        const [rows] = await pool.query(dataQuery, params);
+        console.log('[GET /expenses] rows.length =', rows.length);
+
+        // Backwards compatibility: if no pagination/filters requested, return array as before
+        const legacy = !hasPagination && !startDate && !endDate && !order && !date;
+        if (legacy) return res.json(rows);
+
+        res.set('X-Total-Count', total !== null ? String(total) : String(rows.length));
+        console.log('[GET /expenses] returning total =', total !== null ? total : rows.length);
+        res.json({ data: rows, total: total !== null ? total : rows.length });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -45,21 +92,65 @@ router.post('/expenses', async (req, res) => {
 
 // --- PRODUCTION ---
 router.get('/production', async (req, res) => {
-    const { date } = req.query;
+    // Query params: date, startDate, endDate, limit, offset, order (date_desc|date_asc|id_desc|id_asc)
+    const { date, startDate, endDate, limit, offset, order } = req.query;
     try {
-        let query = `
+        console.log('[GET /production] req.query =', req.query);
+        const params = [];
+        const where = [];
+
+        if (date) {
+            where.push('dp.date = ?');
+            params.push(date);
+        }
+        if (startDate && endDate) {
+            where.push('dp.date BETWEEN ? AND ?');
+            params.push(startDate, endDate);
+        }
+
+        const whereClause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+        console.log('[GET /production] whereClause =', whereClause);
+
+        let orderBy = ' ORDER BY dp.date DESC, dp.id DESC';
+        if (order === 'date_asc') orderBy = ' ORDER BY dp.date ASC, dp.id ASC';
+        if (order === 'id_desc') orderBy = ' ORDER BY dp.id DESC';
+        if (order === 'id_asc') orderBy = ' ORDER BY dp.id ASC';
+
+        const baseQuery = `
             SELECT dp.*, p.name as product_name 
             FROM daily_production dp 
             JOIN products p ON dp.product_id = p.id
         `;
-        const params = [];
-        if (date) {
-            query += ' WHERE dp.date = ?';
-            params.push(date);
+
+        const hasPagination = typeof limit !== 'undefined' || typeof offset !== 'undefined';
+        let dataQuery = `${baseQuery}${whereClause}${orderBy}`;
+
+        let total = null;
+        if (hasPagination) {
+            const countQuery = `SELECT COUNT(*) as cnt FROM daily_production dp${whereClause}`;
+            console.log('[GET /production] counting with params =', params, 'countQuery=', countQuery);
+            const [countRows] = await pool.query(countQuery, params);
+            total = Number(countRows[0].cnt || 0);
+            const defaultLimit = 20;
+            const l0 = parseInt(limit, 10);
+            const l = Number.isNaN(l0) ? defaultLimit : Math.min(MAX_LIMIT, Math.max(1, l0));
+            const o0 = parseInt(offset, 10);
+            const o = Number.isNaN(o0) ? 0 : Math.max(0, o0);
+            dataQuery += ' LIMIT ? OFFSET ?';
+            params.push(l, o);
+            console.log('[GET /production] pagination l,o =', l, o);
         }
-        query += ' ORDER BY dp.id DESC';
-        const [rows] = await pool.query(query, params);
-        res.json(rows);
+
+        console.log('[GET /production] final dataQuery =', dataQuery);
+        console.log('[GET /production] final params =', params);
+        const [rows] = await pool.query(dataQuery, params);
+        console.log('[GET /production] rows.length =', rows.length);
+
+        const legacy = !hasPagination && !startDate && !endDate && !order && !date;
+        if (legacy) return res.json(rows);
+
+        res.set('X-Total-Count', total !== null ? String(total) : String(rows.length));
+        res.json({ data: rows, total: total !== null ? total : rows.length });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -80,21 +171,65 @@ router.post('/production', async (req, res) => {
 
 // --- SALES ---
 router.get('/sales', async (req, res) => {
-    const { date } = req.query;
+    // Query params: date, startDate, endDate, limit, offset, order (date_desc|date_asc|id_desc|id_asc)
+    const { date, startDate, endDate, limit, offset, order } = req.query;
     try {
-        let query = `
+        console.log('[GET /sales] req.query =', req.query);
+        const params = [];
+        const where = [];
+
+        if (date) {
+            where.push('ds.date = ?');
+            params.push(date);
+        }
+        if (startDate && endDate) {
+            where.push('ds.date BETWEEN ? AND ?');
+            params.push(startDate, endDate);
+        }
+
+        const whereClause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+        console.log('[GET /sales] whereClause =', whereClause);
+
+        let orderBy = ' ORDER BY ds.date DESC, ds.id DESC';
+        if (order === 'date_asc') orderBy = ' ORDER BY ds.date ASC, ds.id ASC';
+        if (order === 'id_desc') orderBy = ' ORDER BY ds.id DESC';
+        if (order === 'id_asc') orderBy = ' ORDER BY ds.id ASC';
+
+        const baseQuery = `
             SELECT ds.*, p.name as product_name 
             FROM daily_sales ds 
             JOIN products p ON ds.product_id = p.id
         `;
-        const params = [];
-        if (date) {
-            query += ' WHERE ds.date = ?';
-            params.push(date);
+
+        const hasPagination = typeof limit !== 'undefined' || typeof offset !== 'undefined';
+        let dataQuery = `${baseQuery}${whereClause}${orderBy}`;
+
+        let total = null;
+        if (hasPagination) {
+            const countQuery = `SELECT COUNT(*) as cnt FROM daily_sales ds${whereClause}`;
+            console.log('[GET /sales] counting with params =', params, 'countQuery=', countQuery);
+            const [countRows] = await pool.query(countQuery, params);
+            total = Number(countRows[0].cnt || 0);
+            const defaultLimit = 20;
+            const l0 = parseInt(limit, 10);
+            const l = Number.isNaN(l0) ? defaultLimit : Math.min(MAX_LIMIT, Math.max(1, l0));
+            const o0 = parseInt(offset, 10);
+            const o = Number.isNaN(o0) ? 0 : Math.max(0, o0);
+            dataQuery += ' LIMIT ? OFFSET ?';
+            params.push(l, o);
+            console.log('[GET /sales] pagination l,o =', l, o);
         }
-        query += ' ORDER BY ds.id DESC';
-        const [rows] = await pool.query(query, params);
-        res.json(rows);
+
+        console.log('[GET /sales] final dataQuery =', dataQuery);
+        console.log('[GET /sales] final params =', params);
+        const [rows] = await pool.query(dataQuery, params);
+        console.log('[GET /sales] rows.length =', rows.length);
+
+        const legacy = !hasPagination && !startDate && !endDate && !order && !date;
+        if (legacy) return res.json(rows);
+
+        res.set('X-Total-Count', total !== null ? String(total) : String(rows.length));
+        res.json({ data: rows, total: total !== null ? total : rows.length });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

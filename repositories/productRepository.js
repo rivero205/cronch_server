@@ -3,7 +3,7 @@ const sql = require('../db');
 class ProductRepository {
     async findAll(userId, businessId) {
         const result = await sql`
-            SELECT * FROM products 
+            SELECT id, name, type FROM products 
             WHERE business_id = ${businessId} 
             ORDER BY name ASC
         `;
@@ -12,7 +12,7 @@ class ProductRepository {
 
     async findById(id, userId, businessId) {
         const result = await sql`
-            SELECT * FROM products 
+            SELECT id, name, type FROM products 
             WHERE id = ${id} AND business_id = ${businessId}
         `;
         return result[0];
@@ -23,7 +23,7 @@ class ProductRepository {
         const result = await sql`
             INSERT INTO products (user_id, business_id, name, type) 
             VALUES (${userId}, ${businessId}, ${name}, ${type}) 
-            RETURNING *
+            RETURNING id, name, type
         `;
         return result[0];
     }
@@ -34,7 +34,7 @@ class ProductRepository {
             UPDATE products 
             SET name = ${name}, type = ${type}
             WHERE id = ${id} AND business_id = ${businessId}
-            RETURNING *
+            RETURNING id, name, type
         `;
         return result[0];
     }

@@ -57,7 +57,7 @@ class UserRepository {
     async getUsersByBusiness(businessId) {
         const { data, error } = await supabase
             .from('profiles')
-            .select('*')
+            .select('id, first_name, last_name, phone, position, role, status, is_active, created_at, business:businesses(id, name)')
             .eq('business_id', businessId)
             .order('first_name');
 
@@ -70,7 +70,7 @@ class UserRepository {
         const { data, error } = await supabase
             .from('profiles')
             .select(`
-                *,
+                id, first_name, last_name, phone, position, role, status, is_active, created_at,
                 business:businesses(id, name)
             `)
             .order('business_id', { ascending: true })

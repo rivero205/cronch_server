@@ -11,12 +11,26 @@ router.use(checkRole(['super_admin', 'admin', 'editor']));
 // GET /api/sales
 router.get('/', async (req, res) => {
     try {
+        console.log('[GET /api/sales] arrival', new Date().toISOString(), { query: req.query, user: req.user?.id });
         const filters = {};
-        if (req.query.date) {
-            filters.date = req.query.date;
-        }
+        if (req.query.date) filters.date = req.query.date;
+        if (typeof req.query.limit !== 'undefined') filters.limit = Number(req.query.limit);
+        if (typeof req.query.offset !== 'undefined') filters.offset = Number(req.query.offset);
+        if (req.query.cursorDate) filters.cursorDate = req.query.cursorDate;
+        if (typeof req.query.cursorId !== 'undefined') filters.cursorId = Number(req.query.cursorId);
 
         const sales = await salesService.getSales(req.user.id, req.user.business_id, filters);
+        if (sales && typeof sales === 'object' && Array.isArray(sales.rows)) {
+            if (sales.total !== undefined) {
+                res.set('X-Total-Count', String(sales.total || 0));
+                return res.json({ data: sales.rows, total: sales.total });
+            }
+            if (sales.nextCursor) {
+                res.set('X-Next-Cursor', `${sales.nextCursor.date.toISOString ? sales.nextCursor.date.toISOString() : sales.nextCursor.date}|${sales.nextCursor.id}`);
+            }
+            return res.json({ data: sales.rows, nextCursor: sales.nextCursor });
+        }
+
         res.json(sales);
     } catch (err) {
         res.status(500).json({ error: err.message });
